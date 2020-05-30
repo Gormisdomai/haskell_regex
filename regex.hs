@@ -1,14 +1,16 @@
 module Regex where
 import Data.Char
+import Data.Set hiding (map, filter)
+import qualified Data.Set (map)
 import Control.Monad.State.Lazy
 
 -- we don't need KleenePlus as a seperate operator, it's just there to make NFA building easier
 data Regex = Null | Empty | Literal Char | Kleene Regex | KleenePlus Regex | Union Regex Regex | Concat Regex Regex deriving Show
 
 data NFA state = NFA {
-    states :: [state],
-    transitionF :: (state -> Char -> [state]),
-    start :: [state],
+    states :: Set state,
+    transitionF :: (state -> Char -> Set state),
+    start :: Set state,
     accept :: state -> Bool
 }
 
@@ -24,18 +26,18 @@ buildNFA :: Regex -> NFABuiler
 buildNFA Null = do
     a <- newState
     return (NFA
-        [a]
-        (\s x -> [a])
-        [a]
+        (singleton a)
+        (\s x -> (singleton a))
+        (singleton a)
         (\a->False))
 
 buildNFA Empty = do
     a <- newState
     b <- newState
     return (NFA
-        [a, b]
-        (\s x -> [b])
-        [a]
+        (fromList [a, b])
+        (\s x -> (singleton b))
+        (singleton a)
         (\s->s==a)) 
 
 buildNFA (Literal l) = do
@@ -43,30 +45,30 @@ buildNFA (Literal l) = do
     b <- newState
     c <- newState
     return (NFA
-        [a, b, c]
-        (\s x -> if (s,x) == (a,l) then [b] else [c])
-        [a]
+        (fromList [a, b, c])
+        (\s x -> if (s,x) == (a,l) then (singleton b) else (singleton c))
+        (singleton a)
         (\s->s==b))
 
 buildNFA (Union r1 r2) = do
     nfa1 <- buildNFA r1
     nfa2 <- buildNFA r2
     return (NFA
-        ((states nfa1) ++ (states nfa2))
-        (\s x -> (transitionF nfa1 s x) ++ (transitionF nfa2 s x))
-        ((start nfa1) ++ (start nfa2))
+        ((states nfa1) `union` (states nfa2))
+        (\s x -> (transitionF nfa1 s x) `union` (transitionF nfa2 s x))
+        ((start nfa1) `union` (start nfa2))
         (\s->(accept nfa1 s) || (accept nfa2 s)))
 
 buildNFA (Concat r1 r2) = do
     nfa1 <- buildNFA r1
     nfa2 <- buildNFA r2
     return (NFA
-        ((states nfa1) ++ (states nfa2))
+        ((states nfa1) `union` (states nfa2))
         (\s x -> (transitionF nfa1 s x) 
-            ++ (transitionF nfa2 s x) 
-            ++ (if accept nfa1 s 
-                then concat (map (\s2 -> transitionF nfa2 s2 x) (start nfa2))
-                else []))
+            `union` (transitionF nfa2 s x) 
+            `union` (if accept nfa1 s 
+                then unions (Data.Set.map (\s2 -> transitionF nfa2 s2 x) (start nfa2))
+                else empty))
         (start nfa1)
         (\s->(accept nfa2 s)))
 
@@ -75,9 +77,9 @@ buildNFA (KleenePlus r)  = do
     return (NFA
         (states nfa)
         (\s x -> (transitionF nfa s x)
-            ++ (if accept nfa s 
-                then concat (map (\s2 -> transitionF nfa s2 x) (start nfa))
-                else []))
+            `union` (if accept nfa s 
+                then unions (Data.Set.map (\s2 -> transitionF nfa s2 x) (start nfa))
+                else empty))
         (start nfa)
         (\s->(accept nfa s)))
 
@@ -92,10 +94,24 @@ evalNFA nfa string =
     where
         run states [] = states
         run states (char:string) = run
-            (concat (map (\state -> next state char) states))
+            (unions (Data.Set.map (\state -> next state char) states))
             string
         -- return empty list if states not in set
-        next s c = if s `elem` (states nfa) then transitionF nfa s c else []
+        next s c = if s `member` (states nfa) then transitionF nfa s c else empty
+
+
+-- dump an NFA for testing / profiling / optimisation
+
+dumpNFA :: NFA Int -> [Char] -> String
+dumpNFA nfa xs = (dumpNFAStates nfa) ++ "\n" ++ (dumpNFATransitions nfa xs)
+
+dumpNFAStates :: NFA Int -> String
+dumpNFAStates nfa =
+    show (zip ((toList . states) nfa) (map (accept nfa) ((toList . states) nfa)))
+
+dumpNFATransitions :: NFA Int -> [Char] -> String
+dumpNFATransitions nfa xs =
+    let statesXinputs = [(state, input) | state <- ((toList . states) nfa), input <- xs] in show $ zip statesXinputs (map (uncurry (transitionF nfa)) statesXinputs)
 
 
 -- generator functions for testing
@@ -209,6 +225,9 @@ parseR = parseInput parseRegex
 
 evalR :: String -> String -> Bool
 evalR r i = evalNFA ((compileNFA . buildNFA . parseR) r) i
+
+dumpNFAR :: String -> String
+dumpNFAR r = dumpNFA ((compileNFA . buildNFA . parseR) r) (filter isAlpha r)
 
 generateR :: String -> [String]
 generateR = generateAll . parseR
