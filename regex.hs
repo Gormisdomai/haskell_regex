@@ -2,7 +2,7 @@ module Regex where
 import Data.Char
 import Control.Monad.State.Lazy
 
--- this version doesn't really support KleenePlus, it's just there to make NFA building easier
+-- we don't need KleenePlus as a seperate operator, it's just there to make NFA building easier
 data Regex = Null | Empty | Literal Char | Kleene Regex | KleenePlus Regex | Union Regex Regex | Concat Regex Regex deriving Show
 
 data NFA state = NFA {
