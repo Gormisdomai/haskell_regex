@@ -169,7 +169,8 @@ bottomUpRegexBuilder chars = nub $ concat $ map bottomUpRegexBuilder' [0..] wher
         concat (map (uncurry ((setProductWith Union) `on` bottomUpRegexBuilder')) (getPairsSumming n)) ++
         concat (map (uncurry ((setProductWith Concat) `on` bottomUpRegexBuilder')) (getPairsSumming n))
 
-inferRegexV0 tests = head $ (filter (\r -> and (map (evalNFA ((compileNFA.buildNFA) r)) tests))) (bottomUpRegexBuilder ((nub.concat)tests))
+inferRegexV0 match reject = head $ (filter (\r -> (getMatches r match) && (not(getMatches r reject)))) (bottomUpRegexBuilder ((nub.concat)(match ++ reject))) where
+  getMatches r tests = and (map (evalNFA ((compileNFA.buildNFA) r)) tests)
 -- TODO, next search strategy: generate a Trie (with rejecting states), convert to a DFA, convert to a Regex, generalise 
 
 -- parser functions for utility
