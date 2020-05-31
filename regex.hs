@@ -1,11 +1,13 @@
 module Regex where
 import Data.Char
-import Data.Set hiding (map, filter)
+import Data.Set (singleton, insert, union, unions, toList, fromList, Set, member, empty)
 import qualified Data.Set (map)
+import Data.List (nub)
 import Control.Monad.State.Lazy
+import Data.Function (on)
 
 -- we don't need KleenePlus as a seperate operator, it's just there to make NFA building easier
-data Regex = Null | Empty | Literal Char | Kleene Regex | KleenePlus Regex | Union Regex Regex | Concat Regex Regex deriving Show
+data Regex = Null | Empty | Literal Char | Kleene Regex | KleenePlus Regex | Union Regex Regex | Concat Regex Regex deriving (Show, Eq, Ord)
 
 data NFA state = NFA {
     states :: Set state,
@@ -15,6 +17,8 @@ data NFA state = NFA {
 }
 
 type NFABuiler = State Int (NFA Int)
+
+-- implementation of Thompson's construction, but without epsilon transitions
 
 newState :: State Int Int
 newState = do
@@ -100,6 +104,7 @@ evalNFA nfa string =
         next s c = if s `member` (states nfa) then transitionF nfa s c else empty
 
 
+
 -- dump an NFA for testing / profiling / optimisation
 
 dumpNFA :: NFA Int -> [Char] -> String
@@ -131,9 +136,45 @@ kleeneN xs n = [ x ++ y | x <- xs, y <- (kleeneN xs (n-1))]
 kleene :: [String] -> [String]
 kleene xs = concat $ map (kleeneN xs) [0..]
 
+
+-- generic searching policies
+data Searchable a = Searchable {
+    startNode :: a,
+    goalNode :: a -> Bool,
+    moves :: a -> Set a
+}
+
+breadthFirstSearchPolicy :: Ord a => Searchable a -> [a]
+breadthFirstSearchPolicy (Searchable startNode goalNode moves) = bfs' [startNode]
+    where
+    bfs' nodes = nub (nodes ++ 
+            (bfs' (concat (map (toList.moves) nodes))))
+
+
+-- util functions for bottom up regex builder
+getLiterals chars = (map Literal chars)
+getPairsSumming n = nub [(x,y) | x <- [1 .. n], y <- [1..n], x+y == n]
+setProductWith f xs ys = nub [f x y | x <- xs, y <- ys]
+
+bottomUpRegexBuilder :: [Char] -> [Regex]
+-- todo memoize or dynamic programming
+bottomUpRegexBuilder chars = nub $ concat $ map bottomUpRegexBuilder' [0..] where
+    bottomUpRegexBuilder' :: Int -> [Regex]
+    bottomUpRegexBuilder' 0 = [Null]
+    bottomUpRegexBuilder' 1 = [Empty] ++ (getLiterals chars)
+    bottomUpRegexBuilder' n = nub $
+        map Kleene (bottomUpRegexBuilder' (n-1)) ++
+        map KleenePlus (bottomUpRegexBuilder' (n-1)) ++
+        -- (uncurry (f `on` g)) (a,b) = f (g a) (g b)
+        concat (map (uncurry ((setProductWith Union) `on` bottomUpRegexBuilder')) (getPairsSumming n)) ++
+        concat (map (uncurry ((setProductWith Concat) `on` bottomUpRegexBuilder')) (getPairsSumming n))
+
+inferRegexV0 tests = head $ (filter (\r -> and (map (evalNFA ((compileNFA.buildNFA) r)) tests))) (bottomUpRegexBuilder ((nub.concat)tests))
+-- TODO, next search strategy: generate a Trie (with rejecting states), convert to a DFA, convert to a Regex, generalise 
+
 -- parser functions for utility
 
--- Parsing, (value matched, rest of string)
+-- Parsing, (value matched, rest of string) (inspired by Bird, and the Oxford fp course)
 
 type Parse a = String -> Maybe (a, String)
 
